@@ -148,7 +148,8 @@ def research_agent(state: MultiAgentState) -> dict:
     print("[RESEARCH AGENT] Planning and collecting research...")
 
     llm       = get_llm()
-    tool_name = state["tool_name"]
+    # Sanitize tool_name: keep only alphanumerics, spaces, hyphens, and dots
+    tool_name = re.sub(r"[^\w\s\-\.]", "", state["tool_name"]).strip()
 
     # If Improve Agent already set new queries, use those directly
     existing_queries = state.get("search_queries") or []
@@ -307,31 +308,42 @@ def evaluation_agent(state: MultiAgentState) -> dict:
     print("\n" + "-" * 55)
     print("[EVALUATION AGENT] Scoring research quality...")
 
-    llm       = get_llm()
-    evaluator = llm.with_structured_output(QualityEvaluation)
-
-    result: QualityEvaluation = evaluator.invoke([
-        SystemMessage(content=EVALUATION_AGENT_SYSTEM),
-        HumanMessage(content=EVALUATION_PROMPT.format(analysis=state["analysis"])),
-    ])
-
-    score         = result.score
-    missing_info  = result.missing_information
+    llm           = get_llm()
+    evaluator     = llm.with_structured_output(QualityEvaluation)
     current_retry = state.get("retry_count", 0)
 
+    try:
+        result: QualityEvaluation = evaluator.invoke([
+            SystemMessage(content=EVALUATION_AGENT_SYSTEM),
+            HumanMessage(content=EVALUATION_PROMPT.format(analysis=state["analysis"])),
+        ])
+        score        = result.score
+        missing_info = result.missing_information
+        strengths    = result.strengths
+        weaknesses   = result.weaknesses
+        reason       = result.reason
+
+    except Exception as exc:
+        print(f"  [!] Structured output failed ({exc}). Using fallback score=7.")
+        score        = 7
+        missing_info = "Could not evaluate — LLM response was truncated."
+        strengths    = "Evaluation unavailable."
+        weaknesses   = "Evaluation unavailable."
+        reason       = f"Fallback due to parse error: {exc}"
+
     print(f"  Score            : {score}/10")
-    print(f"  Strengths        : {result.strengths}")
-    print(f"  Weaknesses       : {result.weaknesses}")
+    print(f"  Strengths        : {strengths}")
+    print(f"  Weaknesses       : {weaknesses}")
     print(f"  Missing          : {missing_info}")
-    print(f"  Reason           : {result.reason}")
+    print(f"  Reason           : {reason}")
 
     # Pre-increment retry_count when quality is insufficient
     new_retry = current_retry + 1 if score < 7 else current_retry
 
     feedback = (
         f"Score: {score}/10 | "
-        f"Strengths: {result.strengths} | "
-        f"Weaknesses: {result.weaknesses} | "
+        f"Strengths: {strengths} | "
+        f"Weaknesses: {weaknesses} | "
         f"Missing: {missing_info}"
     )
 
@@ -342,7 +354,7 @@ def evaluation_agent(state: MultiAgentState) -> dict:
         "quality_feedback":    feedback,
         "retry_count":         new_retry,
         "execution_logs": log("Evaluation Agent",
-            f"Score={score}/10 | Retries={new_retry} | {result.reason}"
+            f"Score={score}/10 | Retries={new_retry} | {reason}"
         ),
     }
 

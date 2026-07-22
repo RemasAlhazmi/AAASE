@@ -8,6 +8,7 @@
 import os
 import re
 from datetime import datetime
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
@@ -39,7 +40,9 @@ def get_llm() -> ChatOpenAI:
         model=os.getenv("LLM_MODEL", "google/gemini-2.5-flash"),
         base_url=os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
         temperature=0.3,
-        max_tokens=1500,
+        max_tokens=3000,
+        timeout=30,
+        max_retries=2,
     )
 
 
@@ -70,14 +73,20 @@ def tavily_search(query: str, max_results: int = 3) -> list[dict]:
     try:
         response = search_tool.invoke({"query": query})
         results = response.get("results", []) if isinstance(response, dict) else []
-        return [
-            {
-                "url": r.get("url", ""),
-                "content": r.get("content", ""),
-                "query": query,
-            }
-            for r in results
-        ]
+        validated = []
+        for r in results:
+            url = r.get("url", "")
+            try:
+                parsed = urlparse(url)
+                if parsed.scheme in ("http", "https") and parsed.netloc:
+                    validated.append({
+                        "url": url,
+                        "content": r.get("content", ""),
+                        "query": query,
+                    })
+            except Exception:
+                pass
+        return validated
     except Exception as exc:
         print(f"  [!] Tavily error for '{query}': {exc}")
         return []
@@ -87,9 +96,14 @@ def tavily_search(query: str, max_results: int = 3) -> list[dict]:
 # File I/O helpers
 # ─────────────────────────────────────────────────────────────
 
+_RESERVED_NAMES = {"con", "prn", "aux", "nul", "com1", "com2", "lpt1", "lpt2"}
+
 def safe_filename(name: str) -> str:
-    """Converts a tool name to a filesystem-safe string."""
-    return re.sub(r"[^\w\-]", "_", name).strip("_")
+    """Converts a tool name to a filesystem-safe string (max 50 chars, no reserved names)."""
+    sanitized = re.sub(r"[^\w\-]", "_", name).strip("_")[:50]
+    if sanitized.lower() in _RESERVED_NAMES:
+        sanitized = f"_{sanitized}"
+    return sanitized or "unnamed"
 
 
 def save_report(tool_name: str, report: str) -> str:

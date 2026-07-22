@@ -1,0 +1,6 @@
+Security Report — 2026-07-22T14:10:28.833148
+User ID      : user_001
+Alert Level  : CRITICAL
+Threat       : prompt_injection (score=0.80)
+Anomalous    : False
+[Report generation failed: Error code: 404 - {'error': {'message': 'No endpoints found for qwen/qwen3-1.7b.', 'code': 404}, 'user_id': 'user_3GlEPJVUz5VbPiEB0U3vi2JykHJ'}]
